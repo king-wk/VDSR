@@ -1,6 +1,5 @@
 import argparse
 from math import log10
-from statistics import mode
 import time
 import os
 from os import errno
@@ -15,51 +14,24 @@ from torch.utils.data import DataLoader
 from model import VDSR
 import random
 import math
-from dataset import DatasetFromFolder, TrainDataset
+from dataset import TestDataset
 from tqdm import tqdm
  
 
-
-
-# 输入是固定的
-# 固定输出大小
 parser = argparse.ArgumentParser(description='PyTorch VDSR')
 parser.add_argument('--dataset', type=str, default='BSDS300',
                     required=True, help="dataset directory name")
-# parser.add_argument('--height', type=int, default=540, help="network input height")
-# parser.add_argument('--width', type=int, default=960, help="network input width")
-# parser.add_argument('--crop_size', type=int, default=256,
-#                     required=True, help="network input size")
-# parser.add_argument('--upscale_factor', type=int, default=2,
-#                     required=True, help="super resolution upscale factor")
-parser.add_argument('--patch_size', type=int, default=41,
-                    help="training patch size")
-parser.add_argument('--stride', type=int, default=41,
-                    help="training stride")
+# parser.add_argument('--patch_size', type=int, default=41,
+#                     help="training patch size")
+# parser.add_argument('--stride', type=int, default=41,
+#                     help="training stride")
 parser.add_argument('--batch_size', type=int, default=64,
                     help="training batch size")
-parser.add_argument('--test_batch_size', type=int,
-                    default=32, help="testing batch size")
-parser.add_argument('--epochs', type=int, default=100,
-                    help='number of epochs to train for')
-parser.add_argument('--lr', type=float, default=0.001,
-                    help='Learning Rate. Default=0.001')
-parser.add_argument("--step", type=int, default=20,
-                    help="Sets the learning rate to the initial LR decayed by momentum every n epochs, Default: n=10")
-parser.add_argument("--clip", type=float, default=0.4,
-                    help="Clipping Gradients. Default=0.4")
-parser.add_argument("--weight-decay", "--wd", default=1e-4,
-                    type=float, help="Weight decay, Default: 1e-4")
-parser.add_argument("--momentum", default=0.9, type=float, help="Momentum, Default: 0.9")
 parser.add_argument('--cuda', action='store_true', help='use cuda?')
 parser.add_argument('--threads', type=int, default=2,
                     help='number of threads for data loader to use')
 parser.add_argument('--gpuids', default=[0], nargs='+',
                     help='GPU ID for using')
-# parser.add_argument('--num_update_per_epoch', type=int, default=50,
-#                     help='num_update_per_epoch')
-parser.add_argument('--num_valid_image', type=int, default=10,
-                    help='num_valid_image')
 parser.add_argument('--model', default='VDSR', type=str, metavar='PATH',
                     help='path to test or resume model')
 
@@ -142,63 +114,6 @@ def main():
     print("===> total training time: {:.2f} seconds".format(train_time + validate_time))
 
 
-def adjust_learning_rate(epoch):
-    """Sets the learning rate to the initial LR decayed by 10 every 10 epochs"""
-    lr = args.lr * (0.1 ** (epoch // args.step))
-    return lr
-
-
-def train(model, criterion, epoch, optimizer, train_dataloader):
-    lr = adjust_learning_rate(epoch-1)
-
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = lr
-
-    print("Epoch = {}, lr = {}".format(epoch, optimizer.param_groups[0]["lr"]))
-
-    epoch_loss = 0
-    with tqdm(total=100, desc='epoch[{}]'.format(epoch)) as pbar:
-        for iteration, batch in enumerate(train_dataloader, 1):
-            input, target = Variable(batch[0]), Variable(
-                batch[1], requires_grad=False)
-            # print("input:{}, target:{}".format(input.shape, target.shape))
-            if args.cuda:
-                input = input.cuda()
-                target = target.cuda()
-            print("input:{}".format(input.shape), "target:{}".format(target.shape))
-            output = model(input)
-            loss = criterion(output * 255., target * 255.)
-            epoch_loss += loss.item()
-            optimizer.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), args.clip/lr)
-            optimizer.step()
-            pbar.update(100 / len(train_dataloader))
-
-        # print("===> Epoch[{}]({}/{}): Loss: {:.4f}".format(epoch, iteration, len(train_dataloader), loss.item()))
-
-    print("===> Epoch {} Complete: Avg. Loss: {:.4f}".format(epoch, epoch_loss / len(train_dataloader)))
-
-
-def validate(model, criterion, valid_dataloader):
-    sr_avg_psnr = 0.
-    bicubic_avg_psnr = 0.
-    for batch in valid_dataloader:
-        input, target = Variable(batch[0]), Variable(batch[1])
-        if args.cuda:
-            input = input.cuda()
-            target = target.cuda()
-
-        bicubic_mse = criterion(input * 255., target * 255.)
-        output = model(input)
-        sr_mse = criterion(output * 255., target * 255.)
-        sr_psnr = 10 * log10(255. * 255. / sr_mse.item())
-        bicubic_psnr = 10 * log10(255. * 255. / bicubic_mse.item())
-        sr_avg_psnr += sr_psnr
-        bicubic_avg_psnr += bicubic_psnr
-    print("===> SR_PSNR: {:.4f} dB, BICUBIC_PSNR: {:.4f}".format(sr_avg_psnr / len(valid_dataloader), bicubic_avg_psnr / len(valid_dataloader)))
-
-
 def test(model, criterion, test_dataloader):
     sr_avg_psnr = 0.
     bicubic_avg_psnr = 0.
@@ -265,7 +180,4 @@ def save_model(model, optimizer, epoch):
 
 
 if __name__ == '__main__':
-    start_time = time.time()
     main()
-    elapsed_time = time.time() - start_time
-    print("===> total time: {:.2f} seconds".format(elapsed_time))
