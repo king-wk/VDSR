@@ -14,7 +14,9 @@ from torch.utils.data import DataLoader
 from model import VDSR
 import random
 from dataset import TrainDataset
+from dataset_h5 import DatasetFromHdf5
 from tqdm import tqdm
+import math
  
 
 parser = argparse.ArgumentParser(description='Train VDSR Model')
@@ -47,6 +49,11 @@ parser.add_argument('--num_valid_image', type=int, default=10,
 parser.add_argument('--model', default='VDSR', type=str, metavar='PATH',
                     help='path to test or resume model')
 
+def get_mse(img1, img2):
+    imdff = img1 - img2
+    mse = math.sqrt(np.mean(imdff ** 2))
+    return mse
+
 
 def main():
     global args
@@ -68,7 +75,8 @@ def main():
     print("===> Loading datasets")
     
     # 从文件夹读取图片，处理成 patch
-    dataset = TrainDataset(args.dataset, args.patch_size, args.stride, args.batch_size, args.num_valid_image)
+    dataset = TrainDataset(args.dataset, args.patch_size, args.stride, args.num_valid_image)
+    # dataset = DatasetFromHdf5()
 
     model = VDSR()
     criterion = nn.MSELoss()
@@ -78,9 +86,9 @@ def main():
         with torch.cuda.device(args.gpuids[0]):
             model = model.cuda()
             criterion = criterion.cuda()
-        model = nn.DataParallel(model, device_ids=args.gpuids, output_device=args.gpuids[0])
 
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    # optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     model_path = join("model", "{}_{}.pth".format(args.model, args.dataset))
 
@@ -106,25 +114,25 @@ def main():
         print("===> Epoch[{}-train](complete): {:.2f} seconds\n".format(epoch, elapsed_time))
         save_model(model, optimizer, epoch)
         # 每10轮验证一次
-        if epoch % 10 == 0:
-            # save_model(model, optimizer, epoch)
-            print("===> Start Validating")
-            dataset.setDatasetType('valid')
-            valid_dataloader = DataLoader(dataset=dataset, num_workers=args.threads, batch_size=args.batch_size, shuffle=False)
-            start_time = time.time()
-            validate(model, criterion, valid_dataloader)
-            elapsed_time = time.time() - start_time
-            validate_time += elapsed_time
-            print("===> Epoch[{}-valid](complete): {:.2f} seconds\n".format(epoch, elapsed_time))
-            dataset.setDatasetType('train')
-            train_dataloader = DataLoader(dataset=dataset, num_workers=args.threads, batch_size=args.batch_size, shuffle=True)
+        # if epoch % 10 == 0:
+        #     # save_model(model, optimizer, epoch)
+        #     print("===> Start Validating")
+        #     dataset.setDatasetType('valid')
+        #     valid_dataloader = DataLoader(dataset=dataset, num_workers=args.threads, batch_size=args.batch_size, shuffle=False)
+        #     start_time = time.time()
+        #     validate(model, criterion, valid_dataloader)
+        #     elapsed_time = time.time() - start_time
+        #     validate_time += elapsed_time
+        #     print("===> Epoch[{}-valid](complete): {:.2f} seconds\n".format(epoch, elapsed_time))
+        #     dataset.setDatasetType('train')
+        #     train_dataloader = DataLoader(dataset=dataset, num_workers=args.threads, batch_size=args.batch_size, shuffle=True)
     
     print("===> Finish Training!")
     print("===> Average training time per epoch: {:.2f} seconds".format(train_time / (args.epochs - trained_epoch)))
-    print("===> Average validation time per epoch: {:.2f} seconds".format(validate_time / (args.epochs - trained_epoch)))
+    # print("===> Average validation time per epoch: {:.2f} seconds".format(validate_time / (args.epochs - trained_epoch)))
     print("===> Training time: {:.2f} seconds".format(train_time))
-    print("===> Validation time: {:.2f} seconds".format(validate_time))
-    print("===> Total time: {:.2f} seconds".format(train_time + validate_time))
+    # print("===> Validation time: {:.2f} seconds".format(validate_time))
+    # print("===> Total time: {:.2f} seconds".format(train_time + validate_time))
 
 
 def adjust_learning_rate(epoch):
@@ -142,14 +150,21 @@ def train(model, criterion, epoch, optimizer, train_dataloader):
     print("Epoch: {}, lr: {}".format(epoch, optimizer.param_groups[0]["lr"]))
 
     epoch_loss = 0
-    with tqdm(total=100, desc='epoch[{}]'.format(epoch)) as pbar:
+    model.train()
+    with tqdm(total=len(train_dataloader), desc='epoch[{}]'.format(epoch)) as pbar:
         for iteration, batch in enumerate(train_dataloader, 1):
             input, target = Variable(batch[0]), Variable(
                 batch[1], requires_grad=False)
             if args.cuda:
                 input = input.cuda()
                 target = target.cuda()
-            # print("input:{}".format(input.shape), "target:{}".format(target.shape))
+            # print("input:{}".format(input.shape))
+            # print(input[0])
+            # print("target:{}".format(target.shape))
+            # print(target[0])
+            # print("input_target_mse:", get_mse(np.array(input.data.cpu()), np.array(target.data.cpu())))
+            # assert np.sum(np.array(input.cpu() == target.cpu())) == input.shape[0] * 41 * 41, "input != target"
+            # print(np.sum(np.array(input[0].cpu() == target[0].cpu())) == 41 * 41)
             # 训练的时候，随机
             if random.random() >= 0.5:
                 # 50% 随机跳出
@@ -157,42 +172,46 @@ def train(model, criterion, epoch, optimizer, train_dataloader):
             else:
                 # 50% 概率跑完整个模型
                 idx = 18
-            output = model(input, idx)
-            loss = criterion(output * 255., target * 255.)
+            # print("it will run {} res layers".format(idx))
+            output = model(input, 18)
+            # print("output:{}".format(output.shape))
+            # print(output[0])
+            loss = criterion(output, target)
             epoch_loss += loss.item()
             optimizer.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), args.clip/lr)
+            nn.utils.clip_grad_norm_(model.parameters(), args.clip / lr)
             optimizer.step()
-            if iteration % 686 == 0:
-                pbar.update(1)
+            pbar.update(1)
 
         # print("===> Epoch[{}]({}/{}): Loss: {:.4f}".format(epoch, iteration, len(train_dataloader), loss.item()))
-    print("Loss: {:.4f}".format(epoch_loss / len(train_dataloader)))
+    print("AVG Loss: {}".format(epoch_loss / len(train_dataloader)))
     # print("===> Epoch[{}-train](complete): Loss: {:.4f}".format(epoch, epoch_loss / len(train_dataloader)))
 
 
 def validate(model, criterion, valid_dataloader):
-    sr_avg_psnr = [0. for idx in range(19)]
-    bicubic_avg_psnr = 0.
-    for batch in valid_dataloader:
-        input, target = Variable(batch[0]), Variable(batch[1])
-        if args.cuda:
-            input = input.cuda()
-            target = target.cuda()
+    with torch.no_grad():
+        model.eval()
+        sr_avg_psnr = [0. for idx in range(19)]
+        bicubic_avg_psnr = 0.
+        for batch in valid_dataloader:
+            input, target = Variable(batch[0]), Variable(batch[1])
+            if args.cuda:
+                input = input.cuda()
+                target = target.cuda()
 
-        bicubic_mse = criterion(input * 255., target * 255.)
-        bicubic_psnr = 10 * log10(255. * 255. / bicubic_mse.item())
-        bicubic_avg_psnr += bicubic_psnr
-        for idx in range(19):  # 0-18, 0 表示一个中间残差层也不经过，18 表示经过所有中间残差层
-            output = model(input, idx)
-            sr_mse = criterion(output * 255., target * 255.)
-            sr_psnr = 10 * log10(255. * 255. / sr_mse.item())
-            sr_avg_psnr[idx] += sr_psnr
-    print("===> BICUBIC_PSNR(dB): {:.4f}".format(bicubic_avg_psnr / len(valid_dataloader)))
-    print("===> SR_PSNR(dB):", end=' ')
-    for idx in range(19):
-        print("{}[{}]".format(idx, sr_avg_psnr[idx] / len(valid_dataloader)), end=' ')
+            bicubic_mse = criterion(input, target)
+            bicubic_psnr = 10 * log10(1. / bicubic_mse.item())
+            bicubic_avg_psnr += bicubic_psnr
+            for idx in range(19):  # 0-18, 0 表示一个中间残差层也不经过，18 表示经过所有中间残差层
+                output = model(input, idx)
+                sr_mse = criterion(output, target)
+                sr_psnr = 10 * log10(1. / sr_mse.item())
+                sr_avg_psnr[idx] += sr_psnr
+        print("===> BICUBIC_PSNR(dB):\n{:.6f}".format(bicubic_avg_psnr / len(valid_dataloader)))
+        print("===> SR_PSNR(dB):")
+        for idx in range(19):
+            print("{:2} layer: {:.6f}".format(idx, sr_avg_psnr[idx] / len(valid_dataloader)))
 
 
 def save_model(model, optimizer, epoch):
@@ -211,7 +230,7 @@ def save_model(model, optimizer, epoch):
             "optimizer": optimizer.state_dict()
         }
     torch.save(state, model_path)
-    print("Checkpoint saved to {}".format(model_path))
+    print("Checkpoint saved to {}\n".format(model_path))
     model_path = "model/{}_{}_{}.pth".format(args.model, args.dataset, epoch)
     # 每10轮保存一个最后结果的模型
     if epoch % 10 == 0:

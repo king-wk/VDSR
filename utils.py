@@ -31,20 +31,11 @@ def convert_rgb_to_ycbcr(img):
 
 
 def convert_ycbcr_to_rgb(img):
-    if type(img) == np.ndarray:
-        r = 298.082 * img[:, :, 0] / 256. + 408.583 * img[:, :, 2] / 256. - 222.921
-        g = 298.082 * img[:, :, 0] / 256. - 100.291 * img[:, :, 1] / 256. - 208.120 * img[:, :, 2] / 256. + 135.576
-        b = 298.082 * img[:, :, 0] / 256. + 516.412 * img[:, :, 1] / 256. - 276.836
-        return np.array([r, g, b]).transpose([1, 2, 0])
-    elif type(img) == torch.Tensor:
-        if len(img.shape) == 4:
-            img = img.squeeze(0)
-        r = 298.082 * img[0, :, :] / 256. + 408.583 * img[2, :, :] / 256. - 222.921
-        g = 298.082 * img[0, :, :] / 256. - 100.291 * img[1, :, :] / 256. - 208.120 * img[2, :, :] / 256. + 135.576
-        b = 298.082 * img[0, :, :] / 256. + 516.412 * img[1, :, :] / 256. - 276.836
-        return torch.cat([r, g, b], 0).permute(1, 2, 0)
-    else:
-        raise Exception('Unknown Type', type(img))
+    r = np.clip(1.164 * (img[0,:,:] -16.) + 1.596 * (img[2,:,:] - 128.), 0, 255)
+    g = np.clip(1.164 * (img[0,:,:] -16.) - 0.392 * (img[1,:,:] - 128.) - 0.813 * (img[2,:,:] - 128.), 0, 255)
+    b = np.clip(1.164 * (img[0,:,:] -16.) + 2.017 * (img[1,:,:] - 128.), 0, 255)
+
+    return np.array([r, g, b]).transpose([1, 2, 0])
 
 
 def calc_psnr(img1, img2):

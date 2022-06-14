@@ -42,6 +42,7 @@ class VDSR(nn.Module):
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, sqrt(2. / n))
+                
 
     def make_layer(self, block, num_of_layer):
         layers = []
